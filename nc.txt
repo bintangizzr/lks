@@ -1,0 +1,128 @@
+---
+- name: Install NextCloud di cloud.itnsa.lks
+  hosts: cloud
+  become: yes
+
+  vars:
+    db_name: nextcloud_db
+    db_user: nextcloud_user
+    db_pass: NextCloud123!
+    domain: cloud.itnsa.lks
+    nc_admin_user: LKS-Admin
+    nc_admin_pass: SMKBiS4!!
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install semua paket yang dibutuhkan
+      apt:
+        name:
+          - apache2
+          - mariadb-server
+          - python3-pymysql
+          - wget
+          - unzip
+          - openssl
+          - php
+          - php-mysql
+          - php-xml
+          - php-mbstring
+          - php-intl
+          - php-gd
+          - php-curl
+          - php-zip
+          - php-bcmath
+          - php-gmp
+          - php-imagick
+          - libapache2-mod-php
+        state: present
+
+    - name: Start dan enable Apache
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Start dan enable MariaDB
+      service:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: Buat database NextCloud
+      mysql_db:
+        name: "{{ db_name }}"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Buat user database NextCloud
+      mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_pass }}"
+        priv: "{{ db_name }}.*:ALL"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Download NextCloud terbaru
+      get_url:
+        url: https://download.nextcloud.com/server/releases/latest.zip
+        dest: /tmp/nextcloud.zip
+
+    - name: Extract NextCloud
+      unarchive:
+        src: /tmp/nextcloud.zip
+        dest: /var/www/html/
+        remote_src: yes
+
+    - name: Set permission NextCloud
+      file:
+        path: /var/www/html/nextcloud
+        owner: www-data
+        group: www-data
+        recurse: yes
+        mode: '0755'
+
+    - name: Buat SSL self-signed certificate
+      command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /etc/ssl/private/cloud.key
+        -out /etc/ssl/certs/cloud.crt
+        -subj "/CN={{ domain }}/O=LKS/C=ID"
+      args:
+        creates: /etc/ssl/certs/cloud.crt
+
+    - name: Enable module SSL Apache
+      command: a2enmod ssl
+
+    - name: Enable module Rewrite Apache
+      command: a2enmod rewrite
+
+    - name: Buat virtual host HTTPS NextCloud
+      copy:
+        dest: /etc/apache2/sites-available/nextcloud.conf
+        content: |
+          <VirtualHost *:443>
+              ServerName cloud.itnsa.lks
+              DocumentRoot /var/www/html/nextcloud
+              SSLEngine on
+              SSLCertificateFile /etc/ssl/certs/cloud.crt
+              SSLCertificateKeyFile /etc/ssl/private/cloud.key
+              <Directory /var/www/html/nextcloud>
+                  AllowOverride All
+                  Require all granted
+                  Options FollowSymLinks MultiViews
+              </Directory>
+          </VirtualHost>
+
+    - name: Enable site NextCloud
+      command: a2ensite nextcloud.conf
+
+    - name: Disable site default Apache
+      command: a2dissite 000-default.conf
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted

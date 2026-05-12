@@ -1,0 +1,143 @@
+---
+- name: Install WordPress di blog.itnsa.lks
+  hosts: blog
+  become: yes
+
+  vars:
+    db_name: wordpress_db
+    db_user: wordpress_user
+    db_pass: WordPress123!
+    domain: blog.itnsa.lks
+    wp_admin_user: LKS-Admin
+    wp_admin_pass: SMKBiS4!!
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install semua paket yang dibutuhkan
+      apt:
+        name:
+          - apache2
+          - php
+          - php-mysql
+          - php-curl
+          - php-gd
+          - php-xml
+          - php-mbstring
+          - php-zip
+          - mariadb-server
+          - python3-pymysql
+          - wget
+          - unzip
+          - openssl
+        state: present
+
+    - name: Start dan enable Apache
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Start dan enable MariaDB
+      service:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: Buat database WordPress
+      mysql_db:
+        name: "{{ db_name }}"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Buat user database WordPress
+      mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_pass }}"
+        priv: "{{ db_name }}.*:ALL"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Download WordPress terbaru
+      get_url:
+        url: https://wordpress.org/latest.tar.gz
+        dest: /tmp/wordpress.tar.gz
+
+    - name: Extract WordPress
+      unarchive:
+        src: /tmp/wordpress.tar.gz
+        dest: /var/www/html/
+        remote_src: yes
+
+    - name: Set permission WordPress
+      file:
+        path: /var/www/html/wordpress
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    - name: Buat wp-config.php dari sample
+      copy:
+        src: /var/www/html/wordpress/wp-config-sample.php
+        dest: /var/www/html/wordpress/wp-config.php
+        remote_src: yes
+
+    - name: Set DB_NAME di wp-config
+      replace:
+        path: /var/www/html/wordpress/wp-config.php
+        regexp: 'database_name_here'
+        replace: "{{ db_name }}"
+
+    - name: Set DB_USER di wp-config
+      replace:
+        path: /var/www/html/wordpress/wp-config.php
+        regexp: 'username_here'
+        replace: "{{ db_user }}"
+
+    - name: Set DB_PASSWORD di wp-config
+      replace:
+        path: /var/www/html/wordpress/wp-config.php
+        regexp: 'password_here'
+        replace: "{{ db_pass }}"
+
+    - name: Buat SSL self-signed certificate
+      command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /etc/ssl/private/blog.key
+        -out /etc/ssl/certs/blog.crt
+        -subj "/CN={{ domain }}/O=LKS/C=ID"
+
+    - name: Enable module SSL Apache
+      command: a2enmod ssl
+
+    - name: Enable module Rewrite Apache
+      command: a2enmod rewrite
+
+    - name: Buat virtual host HTTPS WordPress
+      copy:
+        dest: /etc/apache2/sites-available/wordpress.conf
+        content: |
+          <VirtualHost *:443>
+              ServerName blog.itnsa.lks
+              DocumentRoot /var/www/html/wordpress
+              SSLEngine on
+              SSLCertificateFile /etc/ssl/certs/blog.crt
+              SSLCertificateKeyFile /etc/ssl/private/blog.key
+              <Directory /var/www/html/wordpress>
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+          </VirtualHost>
+
+    - name: Enable site WordPress
+      command: a2ensite wordpress.conf
+
+    - name: Disable site default Apache
+      command: a2dissite 000-default.conf
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
